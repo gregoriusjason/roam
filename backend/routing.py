@@ -1,6 +1,7 @@
 """Discovery and pedestrian routes with explicit time-budget checks."""
 import math
 import os
+import random
 import time
 from functools import lru_cache
 from threading import Lock
@@ -168,7 +169,8 @@ def route_for(points):
     return walking_route(tuple((p["lat"], p["lng"]) for p in points))
 
 
-def plan_route(origin, destination, minutes, interests, visited, fresh_only=True, use_ai=True, photo=None):
+def plan_route(origin, destination, minutes, interests, visited, fresh_only=True, use_ai=True, photo=None,
+               exclude=(), shuffle=False):
     if distance(origin, destination) > 15000:
         raise ValueError("Let's keep this a city walk. Choose places within 15 km of each other.")
     direct = route_for([origin, destination])
@@ -183,14 +185,21 @@ def plan_route(origin, destination, minutes, interests, visited, fresh_only=True
     candidates = [dict(p, visited=p["id"] in visited) for p in candidates
                   if distance(p, origin) > 80 and distance(p, destination) > 80
                   and (not fresh_only or p["id"] not in visited)]
-    candidates.sort(key=lambda p: (p["visited"], p["category"] not in interests,
-                     distance(origin, p) + distance(p, destination)))
+    # Regenerating prefers stops not already shown; they're only reused if nothing else fits.
+    # A little randomness lets regenerated routes explore different, nearby options.
+    jitter = {p["id"]: random.uniform(1, 1.8) if shuffle else 1 for p in candidates}
+    candidates.sort(key=lambda p: (p["visited"], p["id"] in exclude, p["category"] not in interests,
+                     (distance(origin, p) + distance(p, destination)) * jitter[p["id"]]))
     mode = "discovery"
     if use_ai and openai_configured() and candidates:
         try:
             ranked = rank_checkpoints(candidates[:20], interests, photo=photo)
+            if ranked and shuffle:
+                ranked = ranked[:6]
+                random.shuffle(ranked)
             if ranked:
-                candidates.sort(key=lambda p: (p["visited"], ranked.index(p["id"]) if p["id"] in ranked else 999))
+                candidates.sort(key=lambda p: (p["visited"], p["id"] in exclude,
+                                               ranked.index(p["id"]) if p["id"] in ranked else 999))
                 mode = "ai"
         except Exception:
             warnings.append("AI personalisation is unavailable. Your interests and exploration history were used instead.")

@@ -11,7 +11,7 @@
   let route = null, map = null, markerLayer, routeLayer, footprintLayer, currentCheckpoint = null, photo = null, detourPhoto = null;
   let speaking = false, recognition = null, recording = false, toastTimer, geoMarker, sending = false;
   const placesById = new Map(initial.places.map(p => [p.id, p]));
-  let interactions = new Map();
+  let interactions = new Map(), lastRequest = null, shownStops = new Set();
 
   function toast(text) {
     $('toast').textContent = text;
@@ -101,7 +101,7 @@
     } else {
       const visible=window.innerWidth<=700?[initial.places[1],initial.places[2],initial.places[3]]:[initial.places[0],initial.places[1],initial.places[2],initial.places[3],initial.places[6]];
       visible.forEach(p=>addMarker(p));
-      if(fit) map.fitBounds(L.latLngBounds(initial.places.map(p=>[p.lat,p.lng])),{paddingTopLeft:[65,80],paddingBottomRight:[65,150]});
+      if(fit) map.fitBounds(L.latLngBounds(initial.places.filter(p=>p.image).map(p=>[p.lat,p.lng])),{paddingTopLeft:[65,80],paddingBottomRight:[65,150]});
     }
     icons();
   }
@@ -208,15 +208,28 @@
     const [hours,minutes]=$('arrival-input').value.split(':').map(Number);const arrival=new Date();arrival.setHours(hours,minutes,0,0);
     if(arrival.getTime()-Date.now()<5*60000){$('trip-error').textContent='Choose an arrival time at least 5 minutes from now, today.';$('trip-error').hidden=false;return;}
     const button=$('generate-button');button.disabled=true;button.innerHTML='<span class="loading-spinner"></span><span>Finding a fresh way there…</span>';
+    lastRequest={origin:selected.origin,destination:selected.destination,arrival_at:arrival.toISOString(),interests:[...document.querySelectorAll('[data-interest].selected')].map(b=>b.dataset.interest),fresh_only:$('fresh-only').checked,photo:detourPhoto};
+    shownStops=new Set();
     try {
-      const data=await api('/api/routes',{method:'POST',body:JSON.stringify({origin:selected.origin,destination:selected.destination,arrival_at:arrival.toISOString(),interests:[...document.querySelectorAll('[data-interest].selected')].map(b=>b.dataset.interest),fresh_only:$('fresh-only').checked,photo:detourPhoto})});
-      route=data.route;route.checkpoints.forEach(p=>placesById.set(p.id,p));
-      await refreshState();renderRoute();drawMap();
-      $('city-label').textContent=route.origin.name;
+      await loadRoute(await api('/api/routes',{method:'POST',body:JSON.stringify(lastRequest)}));
       $('map').scrollIntoView({behavior:'smooth',block:'start'});toast('Your detour is ready. Take a look, then start wandering.');
     } catch(error){$('trip-error').textContent=error.message;$('trip-error').hidden=false;}
     finally{button.disabled=false;button.innerHTML=`${icon('sparkles')}<span>Find my detour</span>${icon('arrow-right')}`;icons();}
   });
+  async function loadRoute(data) {
+    route=data.route;route.checkpoints.forEach(p=>{placesById.set(p.id,p);shownStops.add(p.id);});
+    await refreshState();renderRoute();drawMap();
+    $('city-label').textContent=route.origin.name;
+  }
+  async function regenerateRoute() {
+    if(!lastRequest||!route)return;
+    const button=$('route-regenerate');button.disabled=true;button.innerHTML='<span class="loading-spinner"></span>Finding new stops…';
+    try {
+      const previous=route.checkpoints.map(p=>p.id).join();
+      await loadRoute(await api('/api/routes',{method:'POST',body:JSON.stringify({...lastRequest,regenerate:true,exclude:[...shownStops].slice(-150),replaces:route.id})}));
+      toast(route.checkpoints.map(p=>p.id).join()===previous?'No other stops fit this walk. Try a later arrival time.':'A new way there, through different places.');
+    } catch(error){toast(error.message);if($('route-regenerate')){$('route-regenerate').disabled=false;$('route-regenerate').innerHTML=`${icon('refresh-cw')}Regenerate route`;icons();}}
+  }
   function renderRoute() {
     const panel=$('route-panel');panel.hidden=!route;if(!route)return;
     const journey=state.journeys.find(j=>j.id===route.id),active=activeJourney(),finished=journey?.status==='completed';const completed=journey?.completed_stops||[];const time=new Date(Date.now()+route.total_minutes*60000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
@@ -225,10 +238,11 @@
       ${route.warnings.map(w=>`<p class="route-warning">${esc(w)}</p>`).join('')}
       <div class="checkpoint-list">${route.checkpoints.map((p,i)=>`<button class="route-stop" data-stop="${esc(p.id)}"><span class="stop-number ${completed.includes(p.id)?'done':''}">${completed.includes(p.id)?icon('check'):i+1}</span><span><strong>${esc(p.name)}</strong><small>${esc(p.category)} · ${p.visited?'A familiar favourite':'New to your story'}</small></span>${icon('chevron-right')}</button>`).join('')}</div>
       ${active?`<div class="route-progress"><span style="width:${route.checkpoints.length?completed.length/route.checkpoints.length*100:0}%"></span></div><div class="route-progress-label"><span>${completed.length} of ${route.checkpoints.length} checkpoints visited</span><span>At your own pace</span></div>`:''}
-      <div class="route-actions"><button class="primary-button" id="route-main-action">${icon(active?'flag':finished?'book-heart':'footprints')}<span>${active?'Finish this walk':finished?'Relive this walk':'Let’s start wandering'}</span>${icon('arrow-right')}</button>${active?'<button class="secondary-button" id="route-next">Open next stop</button>':''}</div>
+      <div class="route-actions"><button class="primary-button" id="route-main-action">${icon(active?'flag':finished?'book-heart':'footprints')}<span>${active?'Finish this walk':finished?'Relive this walk':'Let’s start wandering'}</span>${icon('arrow-right')}</button>${active?'<button class="secondary-button" id="route-next">Open next stop</button>':''}${!active&&!finished&&lastRequest?`<button class="secondary-button" id="route-regenerate">${icon('refresh-cw')}Regenerate route</button>`:''}</div>
       <p class="route-note">${active?'Tap a checkpoint when you arrive to mark your progress and teach Pip.':`Estimated arrival if you leave now: ${time}. Includes 5 minutes at each stop and at least a 5-minute arrival buffer when generated.`} Walking estimates may vary; check access and conditions as you go.</p>`;
     panel.querySelectorAll('[data-stop]').forEach(b=>b.onclick=()=>openCheckpoint(checkpointById(b.dataset.stop)));
     $('route-main-action').onclick=()=>active?finishJourney():finished?showSummary(journey):startJourney();
+    if($('route-regenerate'))$('route-regenerate').onclick=regenerateRoute;
     if($('route-next'))$('route-next').onclick=()=>{const next=route.checkpoints.find(p=>!completed.includes(p.id));if(next)openCheckpoint(next);else toast('All checkpoints visited. Finish your walk when you reach the destination.');};
     icons();
   }

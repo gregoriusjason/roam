@@ -245,7 +245,10 @@ def routes():
         allowed = {"History", "Nature", "Arts & culture", "Hidden gems", "Local life"}
         if not isinstance(interests, list) or any(not isinstance(x, str) or x not in allowed for x in interests):
             raise ValueError("Choose interests from the available options.")
-        if throttled(("route", g.owner), 10):
+        exclude = body.get("exclude", [])
+        if not isinstance(exclude, list) or len(exclude) > 200 or any(not isinstance(x, str) or len(x) > 100 for x in exclude):
+            raise ValueError("Couldn't regenerate that route. Please try again.")
+        if throttled(("route", g.owner), 30):
             return jsonify(error="A few too many detours at once. Try again in 10 minutes."), 429
         visited = {m["checkpoint_id"] for m in memories_for(g.owner)}
         for journey in journeys_for(g.owner):
@@ -253,10 +256,15 @@ def routes():
         route_photo = validate_photo(body.get("photo"))
         route = plan_route(origin, destination, minutes, interests, visited,
                            body.get("fresh_only", True) is not False,
-                           use_ai=openai_configured(), photo=route_photo)
+                           use_ai=openai_configured(), photo=route_photo,
+                           exclude=set(exclude), shuffle=body.get("regenerate") is True)
         route["arrival_at"] = arrival.isoformat()
         route["id"] = str(uuid4())
         db().execute("INSERT INTO journeys(id,owner,route,status) VALUES(?,?,?,?)", (route["id"], g.owner, json.dumps(route), "draft"))
+        replaces = body.get("replaces")
+        if isinstance(replaces, str):
+            # A regenerated route replaces the unstarted draft it came from.
+            db().execute("DELETE FROM journeys WHERE id=? AND owner=? AND status='draft'", (replaces, g.owner))
         db().commit()
         return jsonify(route=route)
     except (ValueError, TypeError) as error:
