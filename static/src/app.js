@@ -8,7 +8,7 @@
   const csrf = document.querySelector('meta[name="csrf-token"]').content;
   const state = { user:null, memories:[], journeys:[], ai_ready:initial.aiReady };
   const selected = { origin: initial.locations.find(p => p.id === 'waverley'), destination: initial.locations.find(p => p.id === 'university') };
-  let route = null, map = null, markerLayer, routeLayer, currentCheckpoint = null, photo = null, detourPhoto = null;
+  let route = null, map = null, markerLayer, routeLayer, footprintLayer, currentCheckpoint = null, photo = null, detourPhoto = null;
   let speaking = false, recognition = null, recording = false, toastTimer, geoMarker, sending = false;
   const placesById = new Map(initial.places.map(p => [p.id, p]));
   let interactions = new Map();
@@ -82,8 +82,13 @@
     marker.on('click',()=>icons());
     return marker;
   }
+  function drawFootprint() {
+    footprintLayer.clearLayers();
+    if(state.footprint) L.geoJSON(state.footprint,{interactive:false,style:{stroke:false,fillColor:'#ffd60a',fillOpacity:.45}}).addTo(footprintLayer);
+  }
   function drawMap(fit=true) {
     if(!map) return;
+    drawFootprint();
     markerLayer.clearLayers();routeLayer.clearLayers();
     if(route) {
       L.geoJSON(route.geometry,{style:{color:'#ffffff',weight:9,opacity:.95,lineCap:'round'}}).addTo(routeLayer);
@@ -107,7 +112,7 @@
       attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>',maxZoom:19}).addTo(map);
     let failures=0; tiles.on('tileerror',()=>{if(++failures>3)$('map-error').hidden=false;});tiles.on('tileload',()=>{$('map-error').hidden=true;});
     L.control.zoom({position:'topright'}).addTo(map);
-    markerLayer=L.layerGroup().addTo(map);routeLayer=L.layerGroup().addTo(map);
+    footprintLayer=L.layerGroup().addTo(map);markerLayer=L.layerGroup().addTo(map);routeLayer=L.layerGroup().addTo(map);
     const syncMapSize=()=>{
       document.querySelector('.map-shell').style.height=window.innerWidth>700?`${document.querySelector('.planner-column').offsetHeight-25}px`:'';
       map.invalidateSize();
@@ -239,7 +244,7 @@
   }
   async function finishJourney() {
     $('route-main-action').disabled=true;
-    try {await api(`/api/journeys/${route.id}`,{method:'POST',body:JSON.stringify({action:'finish'})});await refreshState();showSummary(state.journeys.find(j=>j.id===route.id));renderRoute();}
+    try {await api(`/api/journeys/${route.id}`,{method:'POST',body:JSON.stringify({action:'finish'})});await refreshState();showSummary(state.journeys.find(j=>j.id===route.id));renderRoute();drawMap(false);}
     catch(error){toast(error.message);$('route-main-action').disabled=false;}
   }
   function openCheckpoint(p) {
