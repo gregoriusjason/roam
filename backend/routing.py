@@ -1,7 +1,9 @@
 """Discovery and pedestrian routes with explicit time-budget checks."""
+import heapq
 import math
 import os
 import time
+from collections import defaultdict
 from functools import lru_cache
 from threading import Lock
 
@@ -13,6 +15,9 @@ from .places import LOCATIONS, PLACES
 HEADERS = {"User-Agent": "RoamReverseTourGuide/1.0 (walking exploration prototype)"}
 _network_lock = Lock()
 _last_request = 0
+WALK_SPEED = 75
+MAX_SNAP = 250
+CELL = 500
 
 
 def fetch_json(url, params=None, timeout=18):
@@ -39,6 +44,76 @@ def distance(a, b):
     return 6371000 * 2 * math.asin(min(1, math.sqrt(h)))
 
 
+def build_graph(elements):
+    coords = {e["id"]: {"lat": e["lat"], "lng": e["lon"]} for e in elements if e.get("type") == "node"}
+    edges = defaultdict(list)
+    for way in elements:
+        if way.get("type") != "way":
+            continue
+        nodes = way.get("nodes", [])
+        for a, b in zip(nodes, nodes[1:]):
+            if a == b or a not in coords or b not in coords:
+                continue
+            metres = distance(coords[a], coords[b])
+            edges[a].append((b, metres))
+            edges[b].append((a, metres))
+    grid = defaultdict(list)
+    for node in edges:
+        grid[(round(coords[node]["lat"] * CELL), round(coords[node]["lng"] * CELL))].append(node)
+    return {"coords": coords, "edges": dict(edges), "grid": dict(grid)}
+
+
+def overpass_query(south, west, north, east):
+    return ("[out:json][timeout:20];"
+            'way[highway~"^(footway|path|pedestrian|steps|living_street|residential|service|track|'
+            'cycleway|unclassified|tertiary|secondary|primary)$"][foot!=no][access!~"^(private|no)$"]'
+            f"({south},{west},{north},{east});(._;>;);out skel qt;")
+
+
+def nearest_node(graph, point):
+    row, col = round(point["lat"] * CELL), round(point["lng"] * CELL)
+    nodes = (n for dr in range(-3, 4) for dc in range(-3, 4) for n in graph["grid"].get((row + dr, col + dc), ()))
+    best = min(((distance(point, graph["coords"][n]), n) for n in nodes), default=None)
+    return best[1] if best and best[0] <= MAX_SNAP else None
+
+
+def dijkstra(graph, source, limit=math.inf):
+    dist, heap = {source: 0}, [(0, source)]
+    while heap:
+        d, node = heapq.heappop(heap)
+        if d > dist[node]:
+            continue
+        for neighbour, metres in graph["edges"].get(node, ()):
+            total = d + metres
+            if total <= limit and total < dist.get(neighbour, math.inf):
+                dist[neighbour] = total
+                heapq.heappush(heap, (total, neighbour))
+    return dist
+
+
+class WalkNetwork:
+    """Lazy street distances between points; one shortest-path table per source node."""
+
+    def __init__(self, graph, limit):
+        self.graph, self.limit, self.snaps, self.tables = graph, limit, {}, {}
+
+    def snap(self, point):
+        key = (point["lat"], point["lng"])
+        if key not in self.snaps:
+            self.snaps[key] = nearest_node(self.graph, point)
+        return self.snaps[key]
+
+    def meters(self, a, b):
+        start, end = self.snap(a), self.snap(b)
+        if start is None or end is None:
+            return math.inf
+        if start not in self.tables and end in self.tables:
+            start, end = end, start
+        if start not in self.tables:
+            self.tables[start] = dijkstra(self.graph, start, self.limit)
+        return self.tables[start].get(end, math.inf)
+
+
 def validate_location(value):
     if not isinstance(value, dict):
         raise ValueError("Choose a starting point and destination from the search results.")
@@ -55,9 +130,16 @@ def validate_location(value):
             "name": name.strip(), "lat": lat, "lng": lng}
 
 
+def matches(place, query):
+    q = query.casefold().strip()
+    text = (place["name"], place.get("area", ""), place.get("category", ""))
+    # Tags match whole words, so "shop" skips coffee shops; plurals like "parks" still match.
+    return any(q in t.casefold() for t in text) or any(q in (t, t + "s") for t in place.get("tags", ()))
+
+
 @lru_cache(maxsize=256)
 def search_places(query):
-    local = [p for p in LOCATIONS if query.casefold() in p["name"].casefold()]
+    local = [p for p in LOCATIONS if matches(p, query)]
     if local:
         return local[:6]
     data = fetch_json(os.getenv("GEOCODER_URL", "https://photon.komoot.io/api/"),
@@ -168,6 +250,24 @@ def route_for(points):
     return walking_route(tuple((p["lat"], p["lng"]) for p in points))
 
 
+@lru_cache(maxsize=16)
+def _walk_graph(south, west, north, east):
+    endpoint = os.getenv("OVERPASS_URL", "https://overpass.private.coffee/api/interpreter")
+    data = fetch_json(endpoint, {"data": overpass_query(south, west, north, east)}, timeout=25)
+    return build_graph(data.get("elements", []))
+
+
+def walk_network(origin, destination, minutes):
+    budget = (minutes - 5) * WALK_SPEED
+    lat, lng = (origin["lat"] + destination["lat"]) / 2, (origin["lng"] + destination["lng"]) / 2
+    pad = min(3000, budget / 2)
+    dlat, dlng = pad / 111320, pad / (111320 * math.cos(math.radians(lat)))
+    # Round outward to 0.01 degrees so nearby trips share a cached graph.
+    box = (math.floor((lat - dlat) * 100) / 100, math.floor((lng - dlng) * 100) / 100,
+           math.ceil((lat + dlat) * 100) / 100, math.ceil((lng + dlng) * 100) / 100)
+    return WalkNetwork(_walk_graph(*box), budget)
+
+
 def plan_route(origin, destination, minutes, interests, visited, fresh_only=True, use_ai=True, photo=None):
     if distance(origin, destination) > 15000:
         raise ValueError("Let's keep this a city walk. Choose places within 15 km of each other.")
@@ -180,11 +280,18 @@ def plan_route(origin, destination, minutes, interests, visited, fresh_only=True
     except RuntimeError:
         candidates = []
         warnings.append("Nearby discoveries are unavailable. This route goes straight to your destination.")
+    try:
+        net = walk_network(origin, destination, minutes)
+        walk = net.meters if net.meters(origin, destination) < math.inf else None
+    except RuntimeError:
+        walk = None
+    walk = walk or (lambda a, b: distance(a, b) * 1.3)
     candidates = [dict(p, visited=p["id"] in visited) for p in candidates
                   if distance(p, origin) > 80 and distance(p, destination) > 80
-                  and (not fresh_only or p["id"] not in visited)]
+                  and (not fresh_only or p["id"] not in visited)
+                  and (walk(origin, p) + walk(destination, p)) / WALK_SPEED + 10 <= minutes]
     candidates.sort(key=lambda p: (p["visited"], p["category"] not in interests,
-                     distance(origin, p) + distance(p, destination)))
+                     walk(origin, p) + walk(destination, p)))
     mode = "discovery"
     if use_ai and openai_configured() and candidates:
         try:
@@ -203,7 +310,7 @@ def plan_route(origin, destination, minutes, interests, visited, fresh_only=True
         for i in range(len(stops) + 1):
             trial = stops[:i] + [candidate] + stops[i:]
             points = [origin, *trial, destination]
-            estimate = sum(distance(a, b) for a, b in zip(points, points[1:])) * 1.3 / 75 + len(trial) * 5 + 5
+            estimate = sum(walk(a, b) for a, b in zip(points, points[1:])) / WALK_SPEED + len(trial) * 5 + 5
             choices.append((estimate, trial))
         estimate, trial = min(choices, key=lambda c: c[0])
         if estimate <= minutes:

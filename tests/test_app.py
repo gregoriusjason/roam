@@ -1,5 +1,6 @@
 import base64
 import json
+import math
 import os
 import re
 import tempfile
@@ -10,7 +11,7 @@ from unittest.mock import patch
 
 from app import app
 from backend.places import PLACES, LOCATIONS
-from backend.routing import plan_route, validate_location
+from backend.routing import WalkNetwork, build_graph, dijkstra, distance, nearest_node, plan_route, search_places, validate_location
 from backend.storage import db
 from backend.todo import todos
 
@@ -204,6 +205,7 @@ class RoutePlannerTests(unittest.TestCase):
     def setUp(self):
         self.env=patch.dict(os.environ,{'OPENAI_API_KEY':''});self.env.start()
         self.origin,self.destination=LOCATIONS[-3],LOCATIONS[-2]
+        offline=patch('backend.routing.walk_network',side_effect=RuntimeError);offline.start();self.addCleanup(offline.stop)
 
     def tearDown(self):self.env.stop()
 
@@ -243,6 +245,59 @@ class RoutePlannerTests(unittest.TestCase):
         with patch('backend.routing.route_for',side_effect=self.walking),patch('backend.routing.openai_configured',return_value=True),patch('backend.routing.rank_checkpoints',return_value=['imaginary-place',PLACES[1]['id']]):
             result=plan_route(self.origin,self.destination,70,['Hidden gems'],set())
         self.assertNotIn('imaginary-place',[p['id'] for p in result['checkpoints']])
+
+    def test_local_places_are_tagged_and_searchable(self):
+        self.assertGreaterEqual(len(PLACES),50)
+        self.assertEqual(len({p['id'] for p in LOCATIONS}),len(LOCATIONS))
+        self.assertTrue(all(p.get('tags') and p['category'] in {'History','Nature','Arts & culture','Hidden gems','Local life'} for p in PLACES))
+        for query,tag in (('coffee shops','coffee shop'),('Nature','nature'),('landmark','landmark'),('shop','shop'),('bookshops','bookshop')):
+            results=search_places(query)
+            self.assertTrue(results,query)
+            self.assertTrue(all(tag in p['tags'] or tag.casefold() in p['name'].casefold() for p in results),query)
+        self.assertEqual(search_places('Lowdown')[0]['id'],'lowdown-coffee')
+
+    def test_build_graph_connects_ways_and_skips_missing_nodes(self):
+        graph=build_graph([{'type':'node','id':1,'lat':55.9500,'lon':-3.1900},
+                           {'type':'node','id':2,'lat':55.9505,'lon':-3.1900},
+                           {'type':'node','id':3,'lat':55.9505,'lon':-3.1890},
+                           {'type':'way','id':100,'nodes':[1,2,3,99]}])
+        edges=graph['edges']
+        self.assertEqual(set(edges),{1,2,3})
+        self.assertEqual([n for n,_ in edges[2]],[1,3])
+        self.assertAlmostEqual(edges[1][0][1],55.6,delta=1)
+        self.assertAlmostEqual(edges[2][1][1],62.3,delta=1)
+        self.assertEqual(sorted(n for cell in graph['grid'].values() for n in cell),[1,2,3])
+
+    def test_dijkstra_shortest_paths_and_limit(self):
+        graph={'edges':{1:[(2,100),(3,10)],2:[(1,100),(3,20)],3:[(1,10),(2,20)]}}
+        self.assertEqual(dijkstra(graph,1),{1:0,3:10,2:30})
+        self.assertEqual(dijkstra(graph,1,limit=15),{1:0,3:10})
+
+    def test_nearest_node_rejects_far_points(self):
+        graph=build_graph([{'type':'node','id':1,'lat':55.95,'lon':-3.19},{'type':'node','id':2,'lat':55.9505,'lon':-3.19},
+                           {'type':'way','id':1,'nodes':[1,2]}])
+        self.assertEqual(nearest_node(graph,{'lat':55.9501,'lng':-3.19}),1)
+        self.assertIsNone(nearest_node(graph,{'lat':55.96,'lng':-3.19}))
+
+    def test_walk_network_follows_streets_around_a_river(self):
+        # A and B face each other across a river; the only bridge is ~500 m west.
+        a,b={'lat':55.95,'lng':-3.19},{'lat':55.95045,'lng':-3.19}
+        graph=build_graph([{'type':'node','id':1,'lat':55.95,'lon':-3.19},{'type':'node','id':2,'lat':55.95,'lon':-3.198},
+                           {'type':'node','id':3,'lat':55.95045,'lon':-3.198},{'type':'node','id':4,'lat':55.95045,'lon':-3.19},
+                           {'type':'way','id':1,'nodes':[1,2,3,4]}])
+        self.assertLess(distance(a,b),60)
+        self.assertAlmostEqual(WalkNetwork(graph,5000).meters(a,b),1050,delta=100)
+
+    def test_unreachable_place_is_never_a_checkpoint(self):
+        class Net:
+            def __init__(self,blocked):self.blocked=blocked
+            def meters(self,a,b):return math.inf if self.blocked in (a.get('id'),b.get('id')) else distance(a,b)*1.3
+        with patch('backend.routing.route_for',side_effect=self.walking):
+            chosen=plan_route(self.origin,self.destination,70,[],set())['checkpoints'][0]['id']
+            with patch('backend.routing.walk_network',return_value=Net(chosen)):
+                result=plan_route(self.origin,self.destination,70,[],set())
+        self.assertNotIn(chosen,[p['id'] for p in result['checkpoints']])
+        self.assertTrue(result['checkpoints'])
 
 
 if __name__=='__main__':unittest.main()
