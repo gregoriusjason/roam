@@ -19,6 +19,7 @@ from .integrations import (get_user, integration_status, openai_configured,
 from .places import PLACES, LOCATIONS
 from .routing import plan_route, search_places, validate_location
 from .storage import db, close_db, memories_for, journeys_for, migrate_guest
+from .footprints import build_footprint
 from .todo import todos
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -212,7 +213,7 @@ def integrations_health():
 
 @app.get("/api/state")
 def state():
-    return jsonify(user=g.user, memories=memories_for(g.owner), journeys=journeys_for(g.owner),
+    return jsonify(user=g.user, memories=memories_for(g.owner), journeys=journeys_for(g.owner),footprint=build_footprint(journeys_for(g.owner)),
                    ai_ready=openai_configured())
 
 
