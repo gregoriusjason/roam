@@ -20,7 +20,7 @@ class AppTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         app.config.update(TESTING=True, DATABASE=str(Path(self.temp.name) / 'test.sqlite'), SECRET_KEY='test-session-secret')
-        self.env = patch.dict(os.environ, {'OPENAI_API_KEY':'', 'AUTH_PROVIDER':'local'})
+        self.env = patch.dict(os.environ, {'OPENAI_API_KEY':'', 'NEBIUS_API_KEY':'', 'AUTH_PROVIDER':'local'})
         self.env.start()
         self.client = app.test_client()
         self.client.get('/api/state')
@@ -203,7 +203,7 @@ class AppTests(unittest.TestCase):
 
 class RoutePlannerTests(unittest.TestCase):
     def setUp(self):
-        self.env=patch.dict(os.environ,{'OPENAI_API_KEY':''});self.env.start()
+        self.env=patch.dict(os.environ,{'OPENAI_API_KEY':'','NEBIUS_API_KEY':''});self.env.start()
         self.origin,self.destination=LOCATIONS[-3],LOCATIONS[-2]
         offline=patch('backend.routing.walk_network',side_effect=RuntimeError);offline.start();self.addCleanup(offline.stop)
 
@@ -240,6 +240,14 @@ class RoutePlannerTests(unittest.TestCase):
             result=plan_route(self.origin,self.destination,70,[],{p['id'] for p in PLACES})
         self.assertEqual(result['checkpoints'],[])
         self.assertTrue(result['warnings'])
+
+    def test_regenerate_uses_different_checkpoints(self):
+        with patch('backend.routing.route_for',side_effect=self.walking):
+            first=plan_route(self.origin,self.destination,70,[],set())
+            shown={p['id'] for p in first['checkpoints']}
+            second=plan_route(self.origin,self.destination,70,[],set(),exclude=shown,shuffle=True)
+        self.assertTrue(second['checkpoints'])
+        self.assertFalse(shown.intersection(p['id'] for p in second['checkpoints']))
 
     def test_ai_can_only_rank_known_candidates(self):
         with patch('backend.routing.route_for',side_effect=self.walking),patch('backend.routing.openai_configured',return_value=True),patch('backend.routing.rank_checkpoints',return_value=['imaginary-place',PLACES[1]['id']]):

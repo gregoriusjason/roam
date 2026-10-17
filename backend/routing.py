@@ -2,6 +2,7 @@
 import heapq
 import math
 import os
+import random
 import time
 from collections import defaultdict
 from functools import lru_cache
@@ -268,7 +269,8 @@ def walk_network(origin, destination, minutes):
     return WalkNetwork(_walk_graph(*box), budget)
 
 
-def plan_route(origin, destination, minutes, interests, visited, fresh_only=True, use_ai=True, photo=None):
+def plan_route(origin, destination, minutes, interests, visited, fresh_only=True, use_ai=True, photo=None,
+               exclude=(), shuffle=False):
     if distance(origin, destination) > 15000:
         raise ValueError("Let's keep this a city walk. Choose places within 15 km of each other.")
     direct = route_for([origin, destination])
@@ -290,14 +292,21 @@ def plan_route(origin, destination, minutes, interests, visited, fresh_only=True
                   if distance(p, origin) > 80 and distance(p, destination) > 80
                   and (not fresh_only or p["id"] not in visited)
                   and (walk(origin, p) + walk(destination, p)) / WALK_SPEED + 10 <= minutes]
-    candidates.sort(key=lambda p: (p["visited"], p["category"] not in interests,
-                     walk(origin, p) + walk(destination, p)))
+    # Regenerating prefers stops not already shown; they're only reused if nothing else fits.
+    # A little randomness lets regenerated routes explore different, nearby options.
+    jitter = {p["id"]: random.uniform(1, 1.8) if shuffle else 1 for p in candidates}
+    candidates.sort(key=lambda p: (p["visited"], p["id"] in exclude, p["category"] not in interests,
+                     (walk(origin, p) + walk(destination, p)) * jitter[p["id"]]))
     mode = "discovery"
     if use_ai and openai_configured() and candidates:
         try:
             ranked = rank_checkpoints(candidates[:20], interests, photo=photo)
+            if ranked and shuffle:
+                ranked = ranked[:6]
+                random.shuffle(ranked)
             if ranked:
-                candidates.sort(key=lambda p: (p["visited"], ranked.index(p["id"]) if p["id"] in ranked else 999))
+                candidates.sort(key=lambda p: (p["visited"], p["id"] in exclude,
+                                               ranked.index(p["id"]) if p["id"] in ranked else 999))
                 mode = "ai"
         except Exception:
             warnings.append("AI personalisation is unavailable. Your interests and exploration history were used instead.")
