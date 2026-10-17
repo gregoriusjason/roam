@@ -66,25 +66,34 @@ def _client():
     if not openai_configured():
         raise RuntimeError("Your companion is in notebook mode until OpenAI is connected.")
     from openai import OpenAI
-    return OpenAI(api_key=os.environ["OPENAI_API_KEY"], timeout=25, max_retries=1)
+    return OpenAI(
+    api_key=os.environ["OPENAI_API_KEY"],
+    base_url=os.getenv("OPENAI_BASE_URL"),  # None falls back to OpenAI
+    timeout=25, max_retries=1,
+    )
 
-
-def request_chat_completion(message: str, checkpoint: dict, memories: list,
-                            history: list, photo: str | None = None) -> str:
-    content = [{"type": "input_text", "text": message}]
-    if photo:
-        content.append({"type": "input_image", "image_url": photo, "detail": "low"})
+def request_chat_completion(message, checkpoint, memories, history, photo=None):
     context = json.dumps({"location": checkpoint.get("name"),
                           "earlier_user_notes": [m["content"] for m in memories[-12:]]})
-    response = _client().responses.create(
-        model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"), instructions=COMPANION_PROMPT,
-        input=[{"role": "user", "content": "Context for our walk: " + context},
-               *[{"role": h["role"], "content": h["content"]} for h in history[-10:]],
-               {"role": "user", "content": content}], max_output_tokens=350, store=False,
+    # plain string for text-only models; list only when a photo is attached
+    user_content = message if not photo else [
+        {"type": "text", "text": message},
+        {"type": "image_url", "image_url": {"url": photo}},
+    ]
+    response = _client().chat.completions.create(
+        model=os.environ["OPENAI_MODEL"],
+        messages=[
+            {"role": "system", "content": COMPANION_PROMPT},
+            {"role": "user", "content": "Context for our walk: " + context},
+            *[{"role": h["role"], "content": h["content"]} for h in history[-10:]],
+            {"role": "user", "content": user_content},
+        ],
+        max_tokens=350,
     )
-    if not response.output_text.strip():
+    text = (response.choices[0].message.content or "").strip()
+    if not text:
         raise RuntimeError("Pip couldn't form a reply. Your note is still saved.")
-    return response.output_text.strip()
+    return text
 
 
 def rank_checkpoints(candidates: list[dict], interests: list[str], photo: str | None = None) -> list[str]:

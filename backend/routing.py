@@ -168,51 +168,89 @@ def route_for(points):
     return walking_route(tuple((p["lat"], p["lng"]) for p in points))
 
 
-def plan_route(origin, destination, minutes, interests, visited, fresh_only=True, use_ai=True, photo=None):
+def plan_route(origin, destination, minutes, interests, visited, fresh_only=True,
+               use_ai=True, photo=None, speed=75, dwell=8):
     if distance(origin, destination) > 15000:
         raise ValueError("Let's keep this a city walk. Choose places within 15 km of each other.")
-    direct = route_for([origin, destination])
-    if direct["walking_minutes"] + 5 > minutes:
-        raise ValueError(f"The direct walk needs about {direct['walking_minutes']} minutes, plus a 5-minute buffer. Choose a later arrival time.")
+
+    BUFFER, MAX_STOPS = 5, 12
+    pace = 75 / speed  # above 1 means slower than the default pace
+
+    def real_route(points):
+        r = route_for(points)
+        return dict(r, walking_minutes=round(r["walking_minutes"] * pace))
+
+    direct = real_route([origin, destination])
+    if direct["walking_minutes"] + BUFFER > minutes:
+        raise ValueError(f"The direct walk needs about {direct['walking_minutes']} minutes, "
+                         f"plus a {BUFFER}-minute buffer. Choose a later arrival time.")
+
     warnings = []
     try:
         candidates = discover(origin, destination)
     except RuntimeError:
         candidates = []
         warnings.append("Nearby discoveries are unavailable. This route goes straight to your destination.")
+
     candidates = [dict(p, visited=p["id"] in visited) for p in candidates
                   if distance(p, origin) > 80 and distance(p, destination) > 80
                   and (not fresh_only or p["id"] not in visited)]
     candidates.sort(key=lambda p: (p["visited"], p["category"] not in interests,
-                     distance(origin, p) + distance(p, destination)))
+                                   distance(origin, p) + distance(p, destination)))
+
     mode = "discovery"
     if use_ai and openai_configured() and candidates:
         try:
             ranked = rank_checkpoints(candidates[:20], interests, photo=photo)
             if ranked:
-                candidates.sort(key=lambda p: (p["visited"], ranked.index(p["id"]) if p["id"] in ranked else 999))
+                candidates.sort(key=lambda p: (p["visited"],
+                                ranked.index(p["id"]) if p["id"] in ranked else 999))
                 mode = "ai"
         except Exception:
             warnings.append("AI personalisation is unavailable. Your interests and exploration history were used instead.")
-    stops = []
-    # Insert a few diverse stops, then verify the whole pedestrian route.
-    for candidate in candidates:
-        if len(stops) >= 3:
+
+    def total_est(pts):
+        points = [origin, *pts, destination]
+        walk = sum(distance(a, b) for a, b in zip(points, points[1:])) * 1.3 / speed
+        return walk + len(pts) * dwell + BUFFER
+
+    # Greedy: repeatedly add the stop with the best value per extra minute,
+    # until nothing else fits in the time available.
+    rank = {p["id"]: i for i, p in enumerate(candidates)}
+    stops, base = [], total_est([])
+    while len(stops) < MAX_STOPS:
+        best = None
+        for c in candidates:
+            if c in stops:
+                continue
+            value = 1.0 / (1 + rank[c["id"]] / 10)
+            if c["category"] in interests:
+                value *= 1.5
+            for i in range(len(stops) + 1):
+                trial = stops[:i] + [c] + stops[i:]
+                t = total_est(trial)
+                if t > minutes:
+                    continue
+                score = value / max(t - base, 1)
+                if best is None or score > best[0]:
+                    best = (score, trial, t)
+        if best is None:
             break
-        choices = []
-        for i in range(len(stops) + 1):
-            trial = stops[:i] + [candidate] + stops[i:]
-            points = [origin, *trial, destination]
-            estimate = sum(distance(a, b) for a, b in zip(points, points[1:])) * 1.3 / 75 + len(trial) * 5 + 5
-            choices.append((estimate, trial))
-        estimate, trial = min(choices, key=lambda c: c[0])
-        if estimate <= minutes:
-            stops = trial
-    actual = route_for([origin, *stops, destination]) if stops else direct
-    while stops and actual["walking_minutes"] + len(stops) * 5 + 5 > minutes:
-        stops.pop()
-        actual = route_for([origin, *stops, destination]) if stops else direct
-    total = actual["walking_minutes"] + len(stops) * 5
+        _, stops, base = best
+
+    # Verify with the real walking route; if it overshoots, drop the stop
+    # whose removal saves the most time.
+    actual = real_route([origin, *stops, destination]) if stops else direct
+    while stops and actual["walking_minutes"] + len(stops) * dwell + BUFFER > minutes:
+        options = []
+        for i in range(len(stops)):
+            rest = stops[:i] + stops[i + 1:]
+            r = real_route([origin, *rest, destination]) if rest else direct
+            options.append((r["walking_minutes"], i, r))
+        _, i, actual = min(options, key=lambda o: o[0])
+        stops = stops[:i] + stops[i + 1:]
+
+    total = actual["walking_minutes"] + len(stops) * dwell
     if not stops and not warnings:
         warnings.append("No new checkpoints fit this walk. Allow more time or include familiar places.")
     return {"origin": origin, "destination": destination, "checkpoints": stops, **actual,

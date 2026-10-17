@@ -232,21 +232,78 @@
     if($('route-next'))$('route-next').onclick=()=>{const next=route.checkpoints.find(p=>!completed.includes(p.id));if(next)openCheckpoint(next);else toast('All checkpoints visited. Finish your walk when you reach the destination.');};
     icons();
   }
-  async function startJourney() {
+    async function startJourney() {
     $('route-main-action').disabled=true;
-    try {await api(`/api/journeys/${route.id}`,{method:'POST',body:JSON.stringify({action:'start'})});await refreshState();renderRoute();drawMap(false);toast('Let’s wander. Open a checkpoint when you arrive.');}
+    try {await api(`/api/journeys/${route.id}`,{method:'POST',body:JSON.stringify({action:'start'})});await refreshState();renderRoute();drawMap(false);startLive();toast('Let’s wander. Open a checkpoint when you arrive.');}
     catch(error){toast(error.message);$('route-main-action').disabled=false;}
   }
   async function markVisited(p) {
     if(!activeJourney()){toast('Start your route first to track checkpoint progress.');return;}
-    try {await api(`/api/journeys/${route.id}`,{method:'POST',body:JSON.stringify({action:'visit',checkpoint_id:p.id})});await refreshState();renderRoute();drawMap(false);openCheckpoint(p);toast(`${p.name} added to your journey.`);}
+    try {await api(`/api/journeys/${route.id}`,{method:'POST',body:JSON.stringify({action:'visit',checkpoint_id:p.id})});trip?.markDone(p.id);await refreshState();renderRoute();drawMap(false);openCheckpoint(p);toast(`${p.name} added to your journey.`);}
     catch(error){toast(error.message);}
   }
   async function finishJourney() {
     $('route-main-action').disabled=true;
-    try {await api(`/api/journeys/${route.id}`,{method:'POST',body:JSON.stringify({action:'finish'})});await refreshState();showSummary(state.journeys.find(j=>j.id===route.id));renderRoute();drawMap(false);}
+    try {await api(`/api/journeys/${route.id}`,{method:'POST',body:JSON.stringify({action:'finish'})});stopLive();await refreshState();showSummary(state.journeys.find(j=>j.id===route.id));renderRoute();drawMap(false);}
     catch(error){toast(error.message);$('route-main-action').disabled=false;}
   }
+
+    let trip=null;
+    let trip=null,gpsWatch=null,tickTimer=null,countdown=null;
+  function liveBar(){
+    let bar=document.getElementById('live-bar');
+    if(bar){bar.hidden=false;return bar;}
+    bar=document.createElement('div');bar.id='live-bar';
+    bar.style.cssText='position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9999;background:#fff;border-radius:16px;box-shadow:0 6px 24px rgba(0,0,0,.25);padding:10px 14px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;font:600 14px system-ui';
+    bar.innerHTML='<span>⏱ <span id="live-timer">--:--</span> to arrive</span><span id="live-slack">Start moving to track</span><button id="live-gps">Use my location</button><button id="live-sim">Simulate walk</button><button id="live-linger">Linger 15 min</button><button id="live-resume">Resume</button>';
+    bar.querySelectorAll('button').forEach(b=>b.style.cssText='border:1px solid #ccd;background:#f8f9fa;border-radius:999px;padding:6px 12px;cursor:pointer;font:inherit');
+    document.body.appendChild(bar);return bar;
+  }
+  function startLive(){
+    stopLive();liveBar();
+    trip=new LiveTrip(route,{
+      onStatus:({slack})=>{
+        const el=$('live-slack');el.textContent=`${Math.round(slack)} min spare`;
+        el.style.color=slack<0?'#c92a2a':slack<10?'#e8890c':'#2b8a3e';
+      },
+      onRoute:async(r,reason)=>{
+        const before=route.checkpoints.length;
+        route=r;route.checkpoints.forEach(p=>placesById.set(p.id,p));
+        await refreshState();renderRoute();drawMap(false);
+        toast(reason==='late'
+          ?`Running late. Shortened your route: ${before} → ${r.checkpoints.length} stops.`
+          :`Spare time found. Replanned: ${before} → ${r.checkpoints.length} stops.`);
+        if(trip&&trip.simPts&&trip.pos)trip.simulate([trip.pos,...r.checkpoints,r.destination]);
+      }
+    });
+    // countdown runs from the start, even before any position arrives
+    countdown=setInterval(()=>{
+      const s=Math.max(0,Math.round((new Date(route.arrival_at)-trip.now())/1000));
+      const t=$('live-timer');if(!t)return;
+      t.textContent=`${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
+      t.style.color=s<300?'#c92a2a':'inherit';
+    },1000);
+    $('live-gps').onclick=()=>{
+      if(!navigator.geolocation){toast('This browser has no location support.');return;}
+      trip.stop();
+      gpsWatch=navigator.geolocation.watchPosition(
+        p=>trip.onPosition({lat:p.coords.latitude,lng:p.coords.longitude}),
+        e=>toast('Couldn’t get your location: '+e.message),
+        {enableHighAccuracy:true,maximumAge:2000});
+      tickTimer=setInterval(()=>trip.evaluate(),5000);   // re-check even if you stand still
+      toast('Tracking your location. Linger too long and Roam shortens the route.');
+    };
+    $('live-sim').onclick=()=>{trip.paused=false;trip.simulate([route.origin,...route.checkpoints,route.destination]);};
+    $('live-linger').onclick=()=>trip&&trip.linger(15);
+    $('live-resume').onclick=()=>trip&&trip.resume();
+  }
+  function stopLive(){
+    if(trip){trip.stop();trip=null;}
+    clearInterval(countdown);clearInterval(tickTimer);
+    if(gpsWatch!==null){navigator.geolocation.clearWatch(gpsWatch);gpsWatch=null;}
+    const bar=document.getElementById('live-bar');if(bar)bar.hidden=true;
+  }
+
   function openCheckpoint(p) {
     if(!p)return;currentCheckpoint=p;
     const notes=state.memories.filter(m=>m.checkpoint_id===p.id),active=activeJourney();

@@ -17,7 +17,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from .integrations import (get_user, integration_status, openai_configured,
                            preview_reply, request_chat_completion, sign_in, sign_up)
 from .places import PLACES, LOCATIONS
-from .routing import plan_route, search_places, validate_location
+from .routing import plan_route, search_places, validate_location, route_for
 from .storage import db, close_db, memories_for, journeys_for, migrate_guest
 from .footprints import build_footprint
 from .todo import todos
@@ -264,6 +264,53 @@ def routes():
     except RuntimeError as error:
         return jsonify(error=str(error)), 503
 
+@app.post("/api/journeys/<journey_id>/replan")
+def replan(journey_id):
+    try:
+        body = json_body()
+        row = db().execute("SELECT route FROM journeys WHERE id=? AND owner=?",
+                           (journey_id, g.owner)).fetchone()
+        if not row:
+            raise ValueError("Journey not found.")
+        old = json.loads(row["route"])
+
+        current = validate_location(body.get("current"))
+        destination = old["destination"]
+
+        # Minutes left. The browser sends its own value so the demo's fake clock works.
+        arrival = datetime.fromisoformat(old["arrival_at"])
+        minutes = int((arrival - datetime.now(timezone.utc)).total_seconds() / 60)
+        if isinstance(body.get("minutes_left"), (int, float)):
+            minutes = int(body["minutes_left"])
+
+        speed = min(130, max(40, float(body.get("speed") or 75)))
+        dwell = min(25, max(3, float(body.get("dwell") or 8)))
+        done = {x for x in body.get("completed_stops", []) if isinstance(x, str)}
+        visited = {m["checkpoint_id"] for m in memories_for(g.owner)} | done
+
+        try:
+            route = plan_route(current, destination, minutes, old["interests"],
+                               visited, True, use_ai=False, speed=speed, dwell=dwell)
+        except ValueError:
+            # Not enough time for a detour: head straight to the destination.
+            direct = route_for([current, destination])
+            route = dict(direct, origin=current, destination=destination, checkpoints=[],
+                         total_minutes=direct["walking_minutes"],
+                         buffer_minutes=minutes - direct["walking_minutes"],
+                         direct_minutes=direct["walking_minutes"], mode="late",
+                         warnings=["Running late: heading straight to your destination."],
+                         new_places=0, interests=old["interests"])
+
+        route["arrival_at"] = old["arrival_at"]
+        route["id"] = journey_id
+        db().execute("UPDATE journeys SET route=? WHERE id=? AND owner=?",
+                     (json.dumps(route), journey_id, g.owner))
+        db().commit()
+        return jsonify(route=route)
+    except (ValueError, TypeError) as error:
+        return jsonify(error=str(error) or "Couldn't replan."), 400
+    except RuntimeError as error:
+        return jsonify(error=str(error)), 503
 
 @app.post("/api/journeys/<journey_id>")
 def journey_action(journey_id):
