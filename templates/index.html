@@ -1,0 +1,41 @@
+<!-- templates/index.html -->
+
+{% extends 'base.html' %}
+{% block head %}<script src="{{ url_for('static', filename='dist/main.js') }}" defer></script>{% endblock %}
+
+{% block title %}Todos · Todo Compass{% endblock %}
+{% block content %}
+<main class="mx-auto max-w-6xl px-6 py-10">
+<div class="mb-8"><p class="text-sm font-semibold uppercase tracking-wider text-indigo-600">Your list</p><h1 class="mt-1 text-3xl font-bold tracking-tight text-slate-900">Todo overview</h1><p class="mt-2 text-slate-600">Search across your tasks and keep momentum.</p></div>
+<section class="todo-shell rounded-2xl bg-white p-5">
+<div class="flex flex-col gap-3 text-slate-600 sm:flex-row sm:items-center">
+  <input
+    type="text"
+    name="search"
+    hx-post="{{ url_for('search_todo') }}"
+    hx-trigger="input changed delay:250ms"
+    hx-sync="this:replace"
+    aria-label="Search todos"
+    hx-indicator=".htmx-indicator"
+    hx-target="#todo-results"
+    placeholder="Search"
+    class="search-input h-12 w-full rounded-xl bg-white px-4 text-base outline-none sm:max-w-md"
+  >
+  <span class="htmx-indicator text-sm text-slate-400">Searching...</span>
+</div>
+
+<div class="mt-5 overflow-x-auto rounded-xl border border-slate-200"><table class="w-full border-collapse">
+  <thead>
+    <tr>
+      <th class="border-b border-slate-200 bg-slate-50 p-4 text-left text-xs font-bold uppercase tracking-wider text-slate-500">#</th>
+      <th class="border-b border-slate-200 bg-slate-50 p-4 text-left text-xs font-bold uppercase tracking-wider text-slate-500">Title</th>
+      <th class="border-b border-slate-200 bg-slate-50 p-4 text-left text-xs font-bold uppercase tracking-wider text-slate-500">Completed</th>
+    </tr>
+  </thead>
+  <tbody id="todo-results">
+    {% include 'todo.html' %}
+  </tbody>
+</table></div>
+</section>
+</main>
+{% endblock content %}

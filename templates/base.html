@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f7f8f2">
+  <meta name="description" content="Take a little detour. Explore new places, share their stories, and teach your curious AI companion. You explore. You explain. Your AI remembers.">
+  <meta name="csrf-token" content="{{ session.get('csrf', '') }}">
+  <title>{% block title %}Roam — A little detour. A bigger story.{% endblock %}</title>
+  <link rel="icon" href="{{ url_for('static', filename='images/favicon.svg') }}" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='dist/main.css') }}">
+  <script src="{{ url_for('static', filename='dist/lucide.js') }}" defer></script>
+  {% block head %}{% endblock %}
+</head>
+<body hx-headers='{{ {"X-CSRF-Token": session.get("csrf", "")}|tojson }}'>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<header class="site-header">
+  <a class="brand" href="{{ url_for('welcome') }}" aria-label="Roam home"><span class="brand-mark"><i data-lucide="route"></i></span>roam<span class="brand-dot">.</span></a>
+  <nav class="main-nav" aria-label="Main navigation">
+    <a href="/#explore" data-view="explore" class="nav-link active"><i data-lucide="compass"></i><span>Explore</span></a>
+    <a href="/#journeys" data-view="journeys" class="nav-link"><i data-lucide="route"></i><span>My journeys</span></a>
+    <a href="/#memories" data-view="memories" class="nav-link"><i data-lucide="book-heart"></i><span>Our memories</span></a>
+  </nav>
+  <div class="header-actions">
+    <button class="about-button" type="button" onclick="document.getElementById('about-dialog')?.showModal()"><i data-lucide="sparkles"></i><span>A different way to explore</span></button>
+    {% if g.user %}
+      <button class="profile-button" type="button" onclick="document.getElementById('account-dialog').showModal()" aria-label="Your account"><span>{{ g.user.full_name[:1]|upper }}</span></button>
+    {% else %}
+      <a href="{{ url_for('login') }}" class="login-link">Log in <i data-lucide="arrow-up-right"></i></a>
+    {% endif %}
+  </div>
+</header>
+{% block content %}{% endblock %}
+<dialog id="about-dialog" class="dialog about-dialog">
+  <button class="icon-button close-dialog" aria-label="Close" onclick="this.closest('dialog').close()"><i data-lucide="x"></i></button>
+  <div class="pip-face large"><span></span><span></span><b></b></div>
+  <span class="eyebrow">MEET YOUR NEW TRAVEL COMPANION</span>
+  <h2>You lead.<br><em>Pip learns.</em></h2>
+  <p>Most guides tell you what to see. Pip wants to see the city through your eyes.</p>
+  <div class="about-steps"><p><i data-lucide="route"></i><span><strong>Take a little detour</strong>Find new places on your way somewhere.</span></p><p><i data-lucide="mic"></i><span><strong>Tell your side of the story</strong>Share a thought, a photo, or something you know.</span></p><p><i data-lucide="book-heart"></i><span><strong>Make a memory together</strong>Your stories come along on the next visit.</span></p></div>
+  <p class="small muted">Pip is an AI companion powered by OpenAI. Without a connection, notebook mode still saves your observations. Voice availability depends on your browser.</p>
+  <button class="primary-button" onclick="this.closest('dialog').close()">Let’s wander <i data-lucide="arrow-right"></i></button>
+</dialog>
+{% if g.user %}
+<dialog id="account-dialog" class="dialog">
+  <button class="icon-button close-dialog" aria-label="Close" onclick="this.closest('dialog').close()"><i data-lucide="x"></i></button>
+  <span class="eyebrow">YOUR EXPLORER PROFILE</span><h2>Hello, {{ g.user.full_name.split(' ')[0] }}.</h2><p>{{ g.user.email }}</p>
+  <p class="muted">Your journeys and memories are saved to your account on this server.</p>
+  <form method="post" action="{{ url_for('logout') }}"><input type="hidden" name="csrf_token" value="{{ session.csrf }}"><button class="secondary-button">Log out <i data-lucide="log-out"></i></button></form>
+</dialog>
+{% endif %}
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script>document.addEventListener('DOMContentLoaded',()=>{window.lucide?.createIcons(); document.querySelectorAll('dialog').forEach(d=>d.addEventListener('click',e=>{if(e.target===d){const r=d.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)d.close();}}));});</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

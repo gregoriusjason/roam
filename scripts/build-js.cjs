@@ -1,0 +1,10 @@
+const { copyFileSync, mkdirSync, cpSync } = require('node:fs');
+const path = require('node:path');
+const output = path.join(__dirname, '..', 'static', 'dist');
+mkdirSync(output, { recursive: true });
+copyFileSync(require.resolve('htmx.org/dist/htmx.min.js'), path.join(output, 'main.js'));
+copyFileSync(require.resolve('leaflet/dist/leaflet.js'), path.join(output, 'leaflet.js'));
+copyFileSync(require.resolve('leaflet/dist/leaflet.css'), path.join(output, 'leaflet.css'));
+cpSync(path.join(path.dirname(require.resolve('leaflet/dist/leaflet.css')), 'images'), path.join(output, 'images'), { recursive: true });
+copyFileSync(require.resolve('lucide/dist/umd/lucide.min.js'), path.join(output, 'lucide.js'));
+copyFileSync(path.join(__dirname, '..', 'static', 'src', 'app.js'), path.join(output, 'app.js'));

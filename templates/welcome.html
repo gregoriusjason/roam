@@ -1,0 +1,63 @@
+{% extends 'base.html' %}
+{% block head %}<link rel="stylesheet" href="{{ url_for('static', filename='dist/leaflet.css') }}"><script src="{{ url_for('static', filename='dist/leaflet.js') }}" defer></script>{% endblock %}
+{% block content %}
+<main id="main-content" class="app-main">
+<section id="explore-view" class="page-view">
+  <div class="page-intro">
+    <div><div class="eyebrow"><span class="tiny-spark">✳</span> LESS ROUTINE. MORE DISCOVERY.</div><h1>A little detour. <em>A bigger story.</em></h1><p>Find a new way there. Teach Pip something along the way.</p></div>
+    <button class="city-pill" type="button" id="city-button" aria-label="Choose a starting point in Edinburgh"><i data-lucide="map-pin"></i><span id="city-label">Edinburgh, Scotland</span><i data-lucide="chevron-down"></i></button>
+  </div>
+  <div class="explore-workspace">
+    <aside class="planner-column">
+      <section class="planner-card">
+        <div class="section-kicker"><span class="step-icon"><i data-lucide="footprints"></i></span><span>MAKE ROOM FOR A LITTLE WONDER</span></div>
+        <h2>Where are we wandering?</h2>
+        <form id="trip-form">
+          <div class="location-fields">
+            <div class="field-wrap origin-field"><label for="origin-input"><span class="location-dot"></span>Starting from</label><div class="location-input"><input id="origin-input" name="origin" autocomplete="off" value="Edinburgh Waverley" placeholder="A station, street, or place" required maxlength="160" aria-controls="origin-results"><button type="button" class="field-icon" id="locate-button" aria-label="Use my current location" title="Use my current location"><i data-lucide="locate-fixed"></i></button><button type="button" class="field-icon search-place" data-field="origin" aria-label="Search starting location"><i data-lucide="search"></i></button></div><div id="origin-results" class="place-results" hidden></div><p id="location-status" class="location-status" role="status" hidden></p></div>
+            <div class="field-wrap"><label for="destination-input"><i data-lucide="map-pin"></i>Heading to</label><div class="location-input"><input id="destination-input" name="destination" autocomplete="off" value="University of Edinburgh" placeholder="Where do you need to be?" required maxlength="160" aria-controls="destination-results"><button type="button" class="field-icon search-place" data-field="destination" aria-label="Search destination"><i data-lucide="search"></i></button></div><div id="destination-results" class="place-results" hidden></div></div>
+          </div>
+          <div class="arrival-row"><label for="arrival-input"><i data-lucide="clock-3"></i><span>Arrive by <small>today, your local time</small></span></label><input id="arrival-input" type="time" required aria-label="Arrive by, today"></div>
+          <fieldset class="interests-field"><legend>What catches your eye? <span>Pick a few</span></legend><div class="interest-chips"><button type="button" class="interest-chip selected" data-interest="Hidden gems" aria-pressed="true"><i data-lucide="gem"></i>Hidden gems</button><button type="button" class="interest-chip selected" data-interest="History" aria-pressed="true"><i data-lucide="landmark"></i>History</button><button type="button" class="interest-chip" data-interest="Nature" aria-pressed="false"><i data-lucide="leaf"></i>Nature</button><button type="button" class="interest-chip" data-interest="Arts & culture" aria-pressed="false"><i data-lucide="palette"></i>Arts & culture</button><button type="button" class="interest-chip" data-interest="Local life" aria-pressed="false"><i data-lucide="coffee"></i>Local life</button></div></fieldset>
+          <div class="detour-photo-row"><div><strong>Add a visual clue</strong><small>Show Pip what kind of Edinburgh detour you’re after.</small></div><label class="attachment-button" for="detour-photo-input"><i data-lucide="image-plus"></i><span>Attach photo</span><input id="detour-photo-input" type="file" accept="image/*" capture="environment" hidden></label></div><div id="detour-photo-preview" class="detour-photo-preview" hidden></div>
+          <label class="switch-row" for="fresh-only"><span><strong>Somewhere new, please</strong><small>Let’s skip places you’ve explored</small></span><input type="checkbox" id="fresh-only" checked><span class="switch-track" aria-hidden="true"></span></label>
+          <div id="trip-error" class="form-error" role="alert" hidden></div>
+          <button class="primary-button" id="generate-button" type="submit"><i data-lucide="sparkles"></i><span>Find my detour</span><i data-lucide="arrow-right"></i></button>
+          <p class="planner-footnote"><i data-lucide="footprints"></i>A walking route with time to be curious</p>
+        </form>
+      </section>
+      <button class="pip-intro" id="meet-pip-button" type="button"><div class="pip-face"><span></span><span></span><b></b></div><div><strong>A companion, not a tour guide.</strong><p>“You know the stories. I’m all ears.”</p><span>Meet Pip <i data-lucide="arrow-up-right"></i></span></div></button>
+    </aside>
+    <section class="map-column" aria-label="Explore the map">
+      <div class="map-shell"><div id="map" aria-label="Interactive city map" tabindex="0"></div>
+        <div class="map-topline"><div class="map-status"><span class="status-dot"></span><span id="map-status-text">A fresh perspective on Edinburgh</span></div><button class="icon-button" id="fit-map" aria-label="Fit map to discoveries" title="Fit map to discoveries"><i data-lucide="scan"></i></button></div>
+        <div class="map-legend"><span><b class="legend-new"></b>New discoveries</span><span><b class="legend-visited"></b>Places you’ve been</span></div>
+        <div class="map-feature" id="map-feature"><img src="{{ url_for('static', filename='images/edinburgh.jpg') }}" alt="Edinburgh skyline in golden evening light"><div><span class="eyebrow">YOUR NEXT CHAPTER</span><h3>Hello, Edinburgh.</h3><p>Same city. A thousand ways to see it.</p></div><button class="round-button" id="browse-map" aria-label="Browse Edinburgh discoveries"><i data-lucide="arrow-up-right"></i></button></div>
+        <div id="map-error" class="map-error" hidden>Map tiles couldn’t load. Your route and checkpoint list are still available.</div>
+      </div>
+      <div class="map-caption"><span><i data-lucide="sparkles"></i> The best part of getting there? Everything in between.</span><span>Made for wandering.</span></div>
+      <section id="route-panel" class="route-panel" aria-live="polite" hidden></section>
+    </section>
+  </div>
+  <section class="discover-section" id="discover-section"><div class="section-heading"><div><span class="eyebrow">A FEW PLACES TO GET YOU STARTED</span><h2>Follow your curiosity.</h2></div><button id="show-all-places" class="text-button">Explore the map <i data-lucide="arrow-up-right"></i></button></div>
+    <div class="discovery-grid">
+      {% for p in [places[1], places[3], places[2]] %}<button type="button" class="discovery-card" data-place-id="{{ p.id }}"><div class="discovery-image"><img src="{{ url_for('static', filename='images/' + p.image) }}" alt="{{ p.name }}" loading="lazy"><span class="category-badge">{{ p.category }}</span><span class="discovery-arrow"><i data-lucide="arrow-up-right"></i></span></div><div class="discovery-copy"><div><h3>{{ p.name }}</h3><span><i data-lucide="map-pin"></i>{{ p.area }}</span></div><p>{{ p.description }}</p></div></button>{% endfor %}
+    </div>
+  </section>
+  <div class="philosophy-line"><span class="tiny-spark">✳</span><p>You explore. You explain. <em>Your AI remembers.</em></p><span class="small muted">A reverse tour guide. A shared adventure.</span></div>
+</section>
+<section id="journeys-view" class="page-view" hidden><div class="page-intro"><div><div class="eyebrow">THE LONG WAY, WELL REMEMBERED</div><h1>Every walk. <em>A new chapter.</em></h1><p>Your detours, discoveries, and everything in between.</p></div><button class="secondary-button" data-go-explore><i data-lucide="plus"></i>Plan a walk</button></div><div id="journey-stats" class="stats-grid"></div><div id="journey-list"></div></section>
+<section id="memories-view" class="page-view" hidden><div class="page-intro"><div><div class="eyebrow">A CITY THROUGH YOUR EYES</div><h1>Little moments. <em>Lasting memories.</em></h1><p>Everything you’ve taught Pip, one discovery at a time.</p></div><button class="secondary-button" id="export-memories"><i data-lucide="download"></i>Export notebook</button></div><div class="memory-toolbar"><label class="memory-search"><i data-lucide="search"></i><input id="memory-search" placeholder="Find a place or a story…" aria-label="Search memories"></label><span id="memory-count" class="small muted"></span></div><div id="memory-list" class="memory-grid"></div></section>
+<footer class="site-footer"><a class="brand footer-brand" href="/">roam<span class="brand-dot">.</span></a><p>A little less A to B. A little more possibility.</p><button class="text-button" id="credits-button">Map & photo credits <i data-lucide="arrow-up-right"></i></button></footer>
+</main>
+<dialog id="checkpoint-dialog" class="dialog checkpoint-dialog"><button class="icon-button close-dialog" aria-label="Close checkpoint" onclick="this.closest('dialog').close()"><i data-lucide="x"></i></button><div id="checkpoint-content"></div></dialog>
+<dialog id="companion-dialog" class="dialog companion-dialog">
+  <div class="companion-header"><div class="pip-face small"><span></span><span></span><b></b></div><div><h2>Pip <span>Your curious companion</span></h2><p id="companion-location"></p></div><button class="icon-button" id="voice-toggle" aria-label="Turn spoken replies on" aria-pressed="false"><i data-lucide="volume-x"></i></button><button class="icon-button" aria-label="Close companion" onclick="this.closest('dialog').close()"><i data-lucide="x"></i></button></div>
+  <div id="companion-mode" class="companion-mode"></div><div id="chat-messages" class="chat-messages" role="log" aria-live="polite"></div>
+  <div class="composer-wrap"><div id="photo-preview" class="photo-preview" hidden></div><form id="chat-form"><label for="chat-input" class="sr-only">What would you like to teach Pip?</label><textarea id="chat-input" placeholder="What’s the story here?" rows="2" maxlength="4000" required></textarea><div class="composer-actions"><div><button type="button" class="icon-button" id="camera-button" aria-label="Take or attach a photo"><i data-lucide="camera"></i></button><input id="camera-input" type="file" accept="image/*" capture="environment" hidden><button type="button" class="icon-button" id="mic-button" aria-label="Speak your observation"><i data-lucide="mic"></i></button><span id="voice-status" class="small muted">Your words. Your perspective.</span></div><button type="submit" class="send-button" id="send-message" aria-label="Save note and send to Pip"><i data-lucide="arrow-up"></i></button></div></form><p class="privacy-note"><i data-lucide="lock-keyhole"></i>Saved to your notebook. Sent to OpenAI when connected.</p></div>
+</dialog>
+<dialog id="summary-dialog" class="dialog summary-dialog"><button class="icon-button close-dialog" aria-label="Close summary" onclick="this.closest('dialog').close()"><i data-lucide="x"></i></button><div id="summary-content"></div></dialog>
+<dialog id="credits-dialog" class="dialog"><button class="icon-button close-dialog" aria-label="Close credits" onclick="this.closest('dialog').close()"><i data-lucide="x"></i></button><span class="eyebrow">A LITTLE CREDIT WHERE IT’S DUE</span><h2>Built on shared knowledge.</h2><p>Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>. Walking routes: FOSSGIS / OSRM. Place search: Photon.</p><p>Photography from Unsplash: Victoria Street by <a href="https://unsplash.com/photos/ber5vO2QMN4" target="_blank" rel="noopener">Jacob Fryer</a>, Dean Village by <a href="https://unsplash.com/photos/ZrF1r3aJ3jE" target="_blank" rel="noopener">Shayna Douglas</a>, and Calton Hill by <a href="https://unsplash.com/photos/d7_TtRp1s9s" target="_blank" rel="noopener">Connor Mollison</a>. See <a href="/static/images/credits.json" target="_blank" rel="noopener">all image sources and licences</a>.</p><p class="muted small">Walking times are estimates and include five minutes per checkpoint. Check local access, opening times, and conditions as you go.</p></dialog>
+<script id="initial-data" type="application/json">{{ {'places': places, 'locations': locations, 'aiReady': ai_ready}|tojson }}</script>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='dist/app.js') }}" defer></script>{% endblock %}
